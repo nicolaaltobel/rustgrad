@@ -38,7 +38,7 @@ Trained a `2→32→32→32→1` MLP with `tanh` activations on a binary classif
 Add to your `Cargo.toml`:
 ```toml
 [dependencies]
-ferrograd = { git = "https://github.com/nicolaaltobel/rustgrad" }
+rustgrad = { git = "https://github.com/nicolaaltobel/rustgrad" }
 ```
 
 ### Basic example
