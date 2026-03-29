@@ -34,7 +34,7 @@ Trained a `2→32→32→32→1` MLP with `tanh` activations on a binary classif
 - **Train accuracy**: ~97%
 - **Test accuracy**: ~97%
 
-[plot]
+![Moon dataset decision boundary](src/plots/moon.png)
 
 ## Usage
 
