@@ -6,12 +6,9 @@ A scalar-valued autograd engine implemented in Rust, inspired by Karpathy's [mic
 
 - Scalar-valued autograd engine with dynamic DAG construction
 - Reverse-mode backpropagation via topological sort
-- Supported operations: `add`, `sub`, `mul`, `div`, `pow`, `tanh`, `relu`, `exp`, `log`
 - Neural network abstractions: `Neuron`, `Layer`, `MLP`
 - Configurable activation functions per layer (`TanH`, `ReLU`, `Linear`)
-- Xavier initialization
-- SVM hinge loss and MSE loss
-- Training loop with accuracy evaluation and early stopping
+- Xavier and He initialization, automatically selected depending on the chosen activation
 
 ## Architecture
 
@@ -56,12 +53,17 @@ out[0].backward();
 ```
 
 ### Training
+### Training
 ```rust
 // forward pass
 let ypred: Vec<Value> = xs.iter().flat_map(|x| mlp.forward(x)).collect();
 
-// hinge loss
-let loss = hinge_loss(&ys, ypred);
+// hinge loss (implemented in the binary)
+let loss = ypred.iter().zip(ys.iter())
+    .map(|(yout, ygt)| Value::leaf(1.0).sub(&yout.mul_scalar(*ygt)).relu())
+    .reduce(|acc, v| acc.add(&v))
+    .unwrap()
+    .mul_scalar(1.0 / ys.len() as f64);
 
 // backward pass
 mlp.zero_grad();
