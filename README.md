@@ -34,13 +34,6 @@ Trained a `2→32→32→32→1` MLP with `tanh` activations on a binary classif
 ![Moon dataset decision boundary](src/bin/plots/moons.png)
 
 ## Usage
-
-Add to your `Cargo.toml`:
-```toml
-[dependencies]
-rustgrad = { git = "https://github.com/nicolaaltobel/rustgrad" }
-```
-
 ### Basic example
 ```rust
 use ferrograd::{Value, MLP, Activation};
@@ -53,12 +46,11 @@ out[0].backward();
 ```
 
 ### Training
-### Training
 ```rust
 // forward pass
 let ypred: Vec<Value> = xs.iter().flat_map(|x| mlp.forward(x)).collect();
 
-// hinge loss (implemented in the binary)
+// hinge loss
 let loss = ypred.iter().zip(ys.iter())
     .map(|(yout, ygt)| Value::leaf(1.0).sub(&yout.mul_scalar(*ygt)).relu())
     .reduce(|acc, v| acc.add(&v))
@@ -73,7 +65,7 @@ mlp.update(lr);
 
 ## Project Structure
 ```
-ferrograd/
+rustgrad/
 ├── src/
 │   ├── lib.rs          # library root
 │   ├── value.rs        # Value type and autograd engine
@@ -86,13 +78,3 @@ ferrograd/
 │   └── moons.png       # decision boundary
 └── Cargo.toml
 ```
-
-## Implementation Notes
-
-- **DAG identity**: nodes are tracked by raw pointer (`*const RefCell<ValueInner>`) in a `HashSet` during topological sort, avoiding the need to implement `Hash` and `Eq` on `Value`
-- **Cycle prevention**: backward closures hold a `Weak<RefCell<ValueInner>>` reference to the output node to avoid reference cycles
-- **Gradient accumulation**: gradients are accumulated with `+=` to correctly handle nodes that appear multiple times in the DAG
-
-## License
-
-MIT
