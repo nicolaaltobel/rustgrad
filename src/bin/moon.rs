@@ -1,26 +1,28 @@
+use ndarray::Array;
 use rand::rngs::StdRng;
-use rand::{RngExt, SeedableRng};
-use rustgrad::Activation::{TanH};
-use rustgrad::{MLP, Value};
+use rand::Rng;
+use rustgrad::{Activation::Tanh, Init::He, Mlp, Tensor};
 use std::fmt::Write as _;
+use ndarray_rand::rand::SeedableRng;
 
-const MODEL_SEED: u64 = 42;
 const DATA_SEED: u64 = 1337;
 const GRID_STEPS: usize = 100;
 
 fn main() {
-    let mut mlp = MLP::new_seeded(2, &[32, 32, 32, 1], &[TanH, TanH, TanH, TanH], MODEL_SEED);
+    let mlp = Mlp::new(&[2, 64, 32, 16, 1], He, Tanh);
+    let (xs, ys) = make_moons(4000, DATA_SEED);
+    let n_train = 3200;
 
-    let (xs, ys) = make_moons(400, DATA_SEED);
+    train(&mlp, &xs, &ys, n_train, 500);
 
-    let n_train = 320;
-
-    train(&mut mlp, &xs, &ys, n_train, 500);
-
-    let preds: Vec<f64> = xs.iter().map(|x| mlp.forward(x)[0].data()).collect();
+    let preds: Vec<f64> = xs
+        .iter()
+        .map(|x| mlp.forward(x).data()[[0, 0]])
+        .collect();
 
     save_grid(&mlp, &xs, &ys, &preds, n_train, "src/bin/plots/moons.csv");
 }
+
 #[allow(clippy::cast_precision_loss)]
 fn make_moons(n: usize, seed: u64) -> (Vec<Vec<f64>>, Vec<f64>) {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -57,22 +59,26 @@ fn make_moons(n: usize, seed: u64) -> (Vec<Vec<f64>>, Vec<f64>) {
 
     (xs, ys)
 }
+
 #[allow(clippy::cast_precision_loss)]
-fn loss(mlp: &MLP, ys: &[f64], ypred: &[Value]) -> Value {
-    let _ = mlp;
-    ys
-        .iter()
+fn loss(ys: &[f64], ypred: &[Tensor]) -> Tensor {
+    ys.iter()
         .zip(ypred.iter())
         .map(|(y, ypred)| {
-            let margin = ypred.mul(*y);
-            Value::leaf(1.0).sub(margin).relu()
+            let target = Tensor::leaf(Array::from_elem((1, 1), *y).into_dyn());
+            let margin = ypred.mul(target);
+            let one = Tensor::leaf(Array::from_elem((1, 1), 1.0).into_dyn());
+            one.sub(margin).relu()
         })
         .reduce(|acc, v| acc.add(&v))
         .unwrap()
-        .mul(1.0 / ys.len() as f64)
+        .mul(Tensor::leaf(
+            Array::from_elem((1, 1), 1.0 / ys.len() as f64).into_dyn(),
+        ))
 }
+
 #[allow(clippy::cast_precision_loss)]
-fn train(mlp: &mut MLP, xs: &[Vec<f64>], ys: &[f64], train_split: usize, epochs: usize) {
+fn train(mlp: &Mlp, xs: &[Vec<f64>], ys: &[f64], train_split: usize, epochs: usize) {
     let (xs_train, xs_test) = xs.split_at(train_split);
     let (ys_train, ys_test) = ys.split_at(train_split);
     let batch_size = 32;
@@ -91,13 +97,9 @@ fn train(mlp: &mut MLP, xs: &[Vec<f64>], ys: &[f64], train_split: usize, epochs:
             let batch_x = &xs_train[start..end];
             let batch_y = &ys_train[start..end];
 
-            let ypred = batch_x
-                .iter()
-                .flat_map(|x| mlp.forward(x))
-                .collect::<Vec<_>>();
-
-            let batch_loss = loss(mlp, batch_y, &ypred);
-            epoch_loss += batch_loss.data();
+            let ypred: Vec<Tensor> = batch_x.iter().map(|x| mlp.forward(x)).collect();
+            let batch_loss = loss(batch_y, &ypred);
+            epoch_loss += batch_loss.data()[[0, 0]];
 
             mlp.zero_grad();
             batch_loss.backward();
@@ -122,38 +124,28 @@ fn train(mlp: &mut MLP, xs: &[Vec<f64>], ys: &[f64], train_split: usize, epochs:
 
         if epoch % 20 == 0 {
             println!(
-                "Epoch: {epoch}, loss: {epoch_loss:.4}, train accuracy: {train_acc:.4}, test accuracy: {test_acc:.4}, lr: {lr:.5}", );
+                "Epoch: {epoch}, loss: {epoch_loss:.4}, train accuracy: {train_acc:.4}, test accuracy: {test_acc:.4}, lr: {lr:.5}",
+            );
         }
     }
 }
+
 #[allow(clippy::cast_precision_loss)]
-fn accuracy(mlp: &MLP, xs: &[Vec<f64>], ys: &[f64]) -> f64 {
+fn accuracy(mlp: &Mlp, xs: &[Vec<f64>], ys: &[f64]) -> f64 {
     let correct = xs
         .iter()
         .zip(ys.iter())
         .filter(|&(x, &y)| {
-            let pred = mlp.forward(x)[0].data();
+            let pred = mlp.forward(x).data()[[0, 0]];
             (pred > 0.0) == (y > 0.0)
         })
         .count();
     correct as f64 / ys.len() as f64
 }
 
-fn save_grid(mlp: &MLP, xs: &[Vec<f64>], ys: &[f64], preds: &[f64], split: usize, path: &str) {
-    assert_eq!(
-        xs.len(),
-        ys.len(),
-        "dataset size mismatch: xs has {}, ys has {}",
-        xs.len(),
-        ys.len()
-    );
-    assert_eq!(
-        xs.len(),
-        preds.len(),
-        "prediction size mismatch: xs has {}, preds has {}",
-        xs.len(),
-        preds.len()
-    );
+fn save_grid(mlp: &Mlp, xs: &[Vec<f64>], ys: &[f64], preds: &[f64], split: usize, path: &str) {
+    assert_eq!(xs.len(), ys.len());
+    assert_eq!(xs.len(), preds.len());
 
     let mut out = String::from("x1,x2,label,pred,split\n");
 
@@ -167,7 +159,7 @@ fn save_grid(mlp: &MLP, xs: &[Vec<f64>], ys: &[f64], preds: &[f64], split: usize
         for j in 0..GRID_STEPS {
             let x1 = -1.5 + 4.0 * j as f64 / GRID_STEPS as f64;
             let x2 = -1.0 + 3.5 * i as f64 / GRID_STEPS as f64;
-            let pred = mlp.forward(&[x1, x2])[0].data();
+            let pred = mlp.forward(vec![x1, x2]).data()[[0, 0]];
             let _ = writeln!(out, "{x1},{x2},grid,{pred},grid");
         }
     }
