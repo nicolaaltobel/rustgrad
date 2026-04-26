@@ -60,7 +60,7 @@ impl Tensor {
     /// # Panics
     /// TODO
     #[must_use]
-    pub fn tanh(self) -> Tensor {
+    pub fn tanh(&self) -> Tensor {
         let t = self.inner.borrow().data.tanh();
         let out = Tensor::new(t.clone(), vec![self.clone()]);
 
@@ -90,7 +90,7 @@ impl Tensor {
     /// # Panics
     ///  If the upgrade of the `Weak` pointer to an `Rc` fails.
     #[must_use] 
-    pub fn relu(self) -> Tensor {
+    pub fn relu(&self) -> Tensor {
         let x = self.inner.borrow().data.clone();
         let out = Tensor::new(x.mapv(|v| v.max(0.0)), vec![self.clone()]);
 
@@ -176,6 +176,32 @@ impl Tensor {
 
         out
     }
+
+    /// Performs subtraction of `Self` with a type that implements `IntoTensor`, which include `Tensor`, `&Tensor`, `f64`.
+    /// # Panics
+    /// If the upgrade of the `Weak` pointer to an `Rc` fails.
+    #[must_use]
+    pub fn sub(&self, other: impl IntoTensor) -> Tensor {
+        let other = other.into_tensor();
+        let out = Tensor::new(
+            self.inner.borrow().data.clone() - &other.inner.borrow().data,
+            vec![self.clone(), other.clone()],
+        );
+
+        let out_weak = Rc::downgrade(&out.inner);
+        let self_clone = self.clone();
+        let other_clone = other.clone();
+        let self_shape = self.inner.borrow().data.shape().to_vec();
+        let other_shape = other.inner.borrow().data.shape().to_vec();
+
+        out.inner.borrow_mut().backward = Rc::new(move || {
+            let out_grad = out_weak.upgrade().unwrap().borrow().grad.clone();
+            self_clone.inner.borrow_mut().grad += &sum_to_shape(&out_grad, &self_shape);
+            other_clone.inner.borrow_mut().grad -= &sum_to_shape(&out_grad, &other_shape);
+        });
+
+        out
+    }
     
     /// Performs multiplication of `Self` with a type that implements `IntoTensor`, which include `Tensor`, `&Tensor`, `f64`.
     /// # Panics
@@ -191,12 +217,16 @@ impl Tensor {
         let out_weak = Rc::downgrade(&out.inner);
         let self_clone = self.clone();
         let other_clone = other.clone();
+        let self_shape = self.inner.borrow().data.shape().to_vec();
+        let other_shape = other.inner.borrow().data.shape().to_vec();
 
         let backward = {
             move || {
                 let out_grad = out_weak.upgrade().unwrap().borrow().grad.clone();
-                self_clone.inner.borrow_mut().grad += &(out_grad.clone() * &other_clone.inner.borrow().data);
-                other_clone.inner.borrow_mut().grad += &(out_grad * &self_clone.inner.borrow().data);
+                let grad_self = out_grad.clone() * &other_clone.inner.borrow().data;
+                let grad_other = out_grad * &self_clone.inner.borrow().data;
+                self_clone.inner.borrow_mut().grad += &sum_to_shape(&grad_self, &self_shape);
+                other_clone.inner.borrow_mut().grad += &sum_to_shape(&grad_other,&other_shape);
             }
         };
         out.inner.borrow_mut().backward = Rc::new(backward);
@@ -251,30 +281,6 @@ impl Tensor {
         out
     }
     
-    /// Performs subtraction of `Self` with a type that implements `IntoTensor`, which include `Tensor`, `&Tensor`, `f64`.
-    /// # Panics
-    /// If the upgrade of the `Weak` pointer to an `Rc` fails.
-    #[must_use]
-    pub fn sub(&self, other: impl IntoTensor) -> Tensor {
-        let other = other.into_tensor();
-        let out = Tensor::new(
-            self.inner.borrow().data.clone() - &other.inner.borrow().data,
-            vec![self.clone(), other.clone()],
-        );
-
-        let out_weak = Rc::downgrade(&out.inner);
-        let self_clone = self.clone();
-        let other_clone = other.clone();
-
-        out.inner.borrow_mut().backward = Rc::new(move || {
-            let out_grad = out_weak.upgrade().unwrap().borrow().grad.clone();
-            self_clone.inner.borrow_mut().grad += &out_grad;
-            other_clone.inner.borrow_mut().grad -= &out_grad;
-        });
-
-        out
-    }
-    
     /// Performs the power of `Self` with an exponent whose type implements `IntoTensor`, which include `Tensor`, `&Tensor`, `f64`.
     /// # Panics
     /// If the upgrade of the `Weak` pointer to an `Rc` fails.
@@ -289,6 +295,83 @@ impl Tensor {
         out.inner.borrow_mut().backward = Rc::new(move || {
             let out_grad = out_weak.upgrade().unwrap().borrow().grad.clone();
             self_clone.inner.borrow_mut().grad += &(exp * x.powf(exp - 1.0) * out_grad);
+        });
+
+        out
+    }
+
+    /// TODO
+    /// # Panics
+    /// TODO
+    #[must_use]
+    pub fn log_softmax(&self, axis : usize) -> Tensor {
+        assert_eq!(self.inner.borrow().data.ndim(), 2, "expected 2D input");    
+
+        let x = self.inner.borrow().data.clone();
+
+        let max = x.map_axis(Axis(axis), |lane| {
+            lane.fold(f64::NEG_INFINITY, |a, &b| a.max(b))
+        });
+        let shifted = &x - &max.insert_axis(Axis(axis));
+
+        let log_sum_exp = shifted
+            .mapv(f64::exp)
+            .sum_axis(Axis(axis))
+            .mapv(f64::ln);
+        let out_data = &shifted - &log_sum_exp.insert_axis(Axis(axis));
+
+        let out = Tensor::new(out_data.clone(), vec![self.clone()]);
+        let out_weak = Rc::downgrade(&out.inner);
+        let self_clone = self.clone();
+
+        out.inner.borrow_mut().backward = Rc::new(move || {
+            let grad_out = out_weak.upgrade().unwrap().borrow().grad.clone();
+
+            let softmax = out_data.mapv(f64::exp);
+            let sum_grad = grad_out
+                .sum_axis(Axis(axis))
+                .insert_axis(Axis(axis));
+            self_clone.inner.borrow_mut().grad += &(grad_out - softmax * sum_grad);
+        });
+
+        out
+    }
+
+    /// TODO
+    /// # Panics
+    /// TODO
+    #[must_use]
+    #[allow(clippy::cast_precision_loss)]
+    pub fn nll_loss(&self, targets : &[usize]) -> Tensor{
+        assert_eq!(self.inner.borrow().data.ndim(), 2, "expected 2D input");
+
+        let x = self.inner.borrow().data.clone();
+        let n = targets.len() as f64;
+
+        let loss_val = targets
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| x[[i,t]])
+            .sum::<f64>()
+            / -n;
+
+        let out = Tensor::new(
+            Array::from_elem((), loss_val).into_dyn(),
+            vec![self.clone()],
+        );
+
+        let out_weak = Rc::downgrade(&out.inner);
+        let self_clone = self.clone();
+        let targets = targets.to_vec();
+
+        out.inner.borrow_mut().backward = Rc::new(move || {
+            let grad_out = out_weak.upgrade().unwrap().borrow().grad[[]];
+            let grad_scalar = grad_out / -(targets.len() as f64);
+            let mut grad = Array::zeros(self_clone.inner.borrow().data.raw_dim());
+            for (i, &t) in targets.iter().enumerate() {
+                grad[[i,t]] += grad_scalar;
+            }
+            self_clone.inner.borrow_mut().grad += &grad;
         });
 
         out
