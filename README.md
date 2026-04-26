@@ -22,7 +22,7 @@ Tensor
 
 
 ## Moon Dataset
-Trained a `2→32→32→32→1` MLP with `tanh` activations on a binary classification task using the moon dataset (400 points, 80/20 train/test split).
+Trained a `2→64→32→16→1` MLP with `tanh` activations on a binary classification task using the moon dataset (4000 points, 80/20 train/test split).
 
 - **Loss**: SVM hinge loss
 - **Train accuracy**: 100%
