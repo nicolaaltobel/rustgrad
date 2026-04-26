@@ -4,4 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-rand = "0.10.0"
+rand = "0.9.4"
+csv = "1.4.0"
+ndarray-rand = "0.16.0"
+ndarray = { version = "0.17.2"}
